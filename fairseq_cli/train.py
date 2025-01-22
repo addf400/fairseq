@@ -303,8 +303,10 @@ def train(
     should_stop = False
     num_updates = trainer.get_num_updates()
     logger.info("Start iterating over samples")
+    rank_id = dist.get_rank()
+
     for i, samples in enumerate(progress):
-        print("Rank-%d: train step-%d" % (distributed_utils.get_global_rank(), i))
+        print("Rank-%d: train step-%d" % (rank_id, i))
         with metrics.aggregate("train_inner"), torch.autograd.profiler.record_function(
             "train_step-%d" % i
         ):
@@ -328,6 +330,9 @@ def train(
 
         if should_stop:
             break
+        print("Rank-%d: train step-%d done" % (rank_id, i))
+    
+    print(f"[Rank-{rank_id}] Done iterating over samples")
 
     # log end-of-epoch stats
     logger.info("end of epoch {} (average epoch stats below)".format(epoch_itr.epoch))

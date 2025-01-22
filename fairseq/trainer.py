@@ -16,6 +16,7 @@ from itertools import chain
 from typing import Any, Dict, List
 
 import torch
+import torch.distributed as dist
 from fairseq import checkpoint_utils, moe_checkpoint_utils, models, optim, utils
 from fairseq.dataclass.configs import FairseqConfig
 from fairseq.dataclass.utils import convert_namespace_to_omegaconf
@@ -781,11 +782,14 @@ class Trainer(object):
         self.zero_grad()
 
         metrics.log_start_time("train_wall", priority=800, round=0)
+        rank_id = dist.get_rank()
 
         # forward and backward pass
         logging_outputs, sample_size, ooms = [], 0, 0
         for i, sample in enumerate(samples):  # delayed update loop
+            print(f"[rank-{rank_id}]fairseq/trainer.py, acc_step {i}")
             sample, is_dummy_batch = self._prepare_sample(sample)
+            print(f"[rank-{rank_id}]fairseq/trainer.py, acc_step {i}, is_dummy_batch {is_dummy_batch}")
 
             # MoE training with --batch-size or --max-sentences set
             if self.is_moe and getattr(self.cfg.dataset, 'batch_size', None) is not None:
@@ -882,6 +886,7 @@ class Trainer(object):
         else:
             sample_size = float(sample_size)
 
+        print(f"[rank-{rank_id}]fairseq/trainer.py, try _sync_stats")
         # gather logging outputs from all replicas
         if self._sync_stats():
             train_time = self._local_cumulative_training_time()
@@ -895,7 +900,7 @@ class Trainer(object):
             self._cumulative_training_time = (
                 total_train_time / self.data_parallel_world_size
             )
-
+        print(f"[rank-{rank_id}]fairseq/trainer.py, done _sync_stats")
         overflow = False
         logger.debug(f"[{self.get_num_updates()}] done with fwd, bwd")
         try:
@@ -947,6 +952,7 @@ class Trainer(object):
                 self.task.optimizer_step(
                     self.optimizer, model=self.model, update_num=self.get_num_updates()
                 )
+                print(f"[rank-{rank_id}]fairseq/trainer.py, optimizer_step")
             logger.debug(f"[{self.get_num_updates()}] done with optimizer step")
 
         except FloatingPointError:
@@ -976,7 +982,7 @@ class Trainer(object):
                 self._log_oom(e)
                 logger.error("OOM during optimization, irrecoverable")
             raise e
-
+        print(f"[rank-{rank_id}]fairseq/trainer.py, done optimizer")
         # Some distributed wrappers (e.g., SlowMo) need access to the optimizer
         # after the step
         if hasattr(self.model, "perform_additional_optimizer_actions"):
@@ -1043,7 +1049,7 @@ class Trainer(object):
                     == 0
                 ):
                     torch.cuda.empty_cache()
-
+        print(f"[rank-{rank_id}]fairseq/trainer.py, done logging_output")
         if self.cfg.common.fp16:
             metrics.log_scalar(
                 "loss_scale",
@@ -1054,6 +1060,7 @@ class Trainer(object):
             )
 
         metrics.log_stop_time("train_wall")
+        print(f"[rank-{rank_id}]fairseq/trainer.py, done train_step")
         return logging_output
 
     @metrics.aggregate("valid")
